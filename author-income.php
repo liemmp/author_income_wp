@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Author Income
  * Description: Thống kê lượt xem bài viết và hoa hồng theo tác giả, tính thu nhập và gửi email báo cáo hàng tháng.
- * Version: 2.37
+ * Version: 2.38
  * Author: ChatGPT, Deepseek và Rhino.
  */
 
@@ -551,142 +551,149 @@ class Author_Post_Views {
      *             kèm cột "Trạng thái" có thể toggle.
      *  - Bảng 2: Tác giả có tổng thu nhập < ngưỡng thanh toán, hiển thị cả cột "Tồn".
      */
-    public function render_partner_dashboard() {
-        // Lấy các thiết lập
-        $price_per_view  = get_option('author_views_price_per_view', 100);
-        $threshold       = get_option('author_payment_threshold', 1000000);
-        $selected_month  = isset($_GET['month']) ? sanitize_text_field($_GET['month']) : date('Y-m');
+	public function render_partner_dashboard() {
+		// Lấy các thiết lập
+		$price_per_view  = get_option('author_views_price_per_view', 100);
+		$threshold       = get_option('author_payment_threshold', 1000000);
+		$selected_month  = isset($_GET['month']) ? sanitize_text_field($_GET['month']) : date('Y-m');
 
-        // Xử lý cập nhật trạng thái thanh toán nếu form POST được submit
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_payment_status'])) {
-            $this->process_partner_dashboard_payments($selected_month);
-            echo '<div class="updated"><p>Cập nhật trạng thái thanh toán thành công.</p></div>';
-        }
+		// Xử lý tháng trước (để hiển thị cột "Tồn (tháng trước)")
+		$selected_month_timestamp = strtotime($selected_month . '-01');
+		$previous_month_timestamp = strtotime('-1 month', $selected_month_timestamp);
+		$previous_month = date('Y-m', $previous_month_timestamp);
 
-        // Lấy thông tin đơn hàng không cần thiết trong phần tính hoa hồng vì giờ dùng get_author_monthly_commission()
+		// Xử lý cập nhật trạng thái thanh toán nếu form POST được submit
+		if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_payment_status'])) {
+			$this->process_partner_dashboard_payments($selected_month);
+			echo '<div class="updated"><p>Cập nhật trạng thái thanh toán thành công.</p></div>';
+		}
 
-        // Tính lượt xem
-        $authors = get_users(array(
-            'capability' => array('edit_posts'),
-            'has_published_posts' => array('post')
-        ));
+		// Lấy danh sách tác giả
+		$authors = get_users(array(
+			'capability' => array('edit_posts'),
+			'has_published_posts' => array('post')
+		));
 
-        // Phân chia tác giả thành 2 nhóm: đủ điều kiện và chưa đủ điều kiện thanh toán
-        $eligible = array();
-        $noneligible = array();
-        
-        foreach ($authors as $author) {
-            $aid  = $author->ID;
-            $name = $author->display_name;
+		// Phân chia tác giả thành 2 nhóm: đủ điều kiện và chưa đủ điều kiện thanh toán
+		$eligible = array();
+		$noneligible = array();
 
-            // Lấy cột "Tồn": số tiền tồn của tháng hiện tại (được lưu qua user meta)
-            $carry = get_user_meta($aid, "author_carry_{$selected_month}", true);
-            $carry = is_numeric($carry) ? $carry : 0;
+		foreach ($authors as $author) {
+			$aid  = $author->ID;
+			$name = $author->display_name;
 
-            // Lấy view_income: lượt xem * giá mỗi lượt xem
-            $views = $this->get_author_monthly_views($aid, $selected_month);
-            $view_income = $views * $price_per_view;
+			// Lấy "Tồn (tháng trước)" từ author_carry_{$previous_month}
+			$carry = get_user_meta($aid, "author_carry_{$previous_month}", true);
+			$carry = is_numeric($carry) ? $carry : 0;
 
-            // Lấy hoa hồng của tác giả thông qua hàm get_author_monthly_commission()
-            $commission_income = $this->get_author_monthly_commission($aid, $selected_month);
+			// Lấy view_income: lượt xem * giá mỗi lượt xem
+			$views = $this->get_author_monthly_views($aid, $selected_month);
+			$view_income = $views * $price_per_view;
 
-            // Tổng thực nhận tháng = carry + view_income + commission_income
-            $overall = $carry + $view_income + $commission_income;
+			// Lấy hoa hồng của tác giả
+			$commission_income = $this->get_author_monthly_commission($aid, $selected_month);
 
-            // Lấy trạng thái thanh toán của tháng hiện tại, mặc định là 'chua'
-            $status = get_user_meta($aid, "author_payment_status_{$selected_month}", true);
-            if (!$status) { $status = 'chua'; }
+			// Tổng thực nhận của tháng
+			$overall = $carry + $view_income + $commission_income;
 
-            $data = array(
-                'name'              => $name,
-                'carry'             => $carry,
-                'view_income'       => $view_income,
-                'commission_income' => $commission_income,
-                'overall'           => $overall,
-                'status'            => $status,
-            );
+			// Lấy trạng thái thanh toán tháng hiện tại
+			$status = get_user_meta($aid, "author_payment_status_{$selected_month}", true);
+			if (!$status) { $status = 'chua'; }
 
-            if ($overall >= $threshold) {
-                $eligible[$aid] = $data;
-            } else {
-                $noneligible[$aid] = $data;
-            }
-        }
+			$data = array(
+				'name'              => $name,
+				'carry'             => $carry,
+				'view_income'       => $view_income,
+				'commission_income' => $commission_income,
+				'overall'           => $overall,
+				'status'            => $status,
+			);
 
-        echo '<div class="wrap">';
-        echo '<h1>Tổng thu nhập tác giả - Tháng ' . esc_html(date('m-Y', strtotime($selected_month . '-01'))) . '</h1>';
+			if ($overall >= $threshold) {
+				$eligible[$aid] = $data;
+			} else {
+				$noneligible[$aid] = $data;
+			}
+		}
 
-        // Form chọn tháng
-        echo '<form method="get">';
-        echo '<input type="hidden" name="page" value="partner_dashboard">';
-        echo '<select name="month">';
-        $current_year = date('Y');
-        for ($m = 1; $m <= 12; $m++) {
-            $month_val = sprintf('%02d', $m);
-            $option_value = $current_year . '-' . $month_val;
-            $option_label = $month_val . '-' . $current_year;
-            $sel = ($option_value == $selected_month) ? 'selected' : '';
-            echo "<option value='" . esc_attr($option_value) . "' $sel>" . esc_html($option_label) . "</option>";
-        }
-        echo '</select> ';
-        echo '<input type="submit" class="button button-primary" value="Xem">';
-        echo '</form><br>';
+		// Hiển thị giao diện
+		echo '<div class="wrap">';
+		echo '<h1>Tổng thu nhập tác giả - Tháng ' . esc_html(date('m-Y', strtotime($selected_month . '-01'))) . '</h1>';
 
-        // Bảng 1: Tác giả đủ điều kiện thanh toán (≥ threshold) với cột toggle trạng thái
-        echo '<form method="post">';
-        echo '<input type="hidden" name="page" value="partner_dashboard">';
-        echo '<input type="hidden" name="month" value="' . esc_attr($selected_month) . '">';
-        echo '<h2>Danh sách tác giả đủ điều kiện thanh toán (≥ ' . wc_price($threshold) . ')</h2>';
-        echo '<table class="widefat fixed striped">';
-        echo '<thead><tr>';
-        echo '<th>Tác giả</th>';
-        echo '<th>Tồn (tháng trước)</th>';
-        echo '<th>Thu nhập lượt xem</th>';
-        echo '<th>Thu nhập hoa hồng</th>';
-        echo '<th>Tổng thực nhận</th>';
-        echo '<th>Trạng thái</th>';
-        echo '</tr></thead><tbody>';
-        foreach ($eligible as $aid => $data) {
-            echo '<tr>';
-            echo '<td>' . esc_html($data['name']) . '</td>';
-            echo '<td>' . wc_price($data['carry']) . '</td>';
-            echo '<td>' . wc_price($data['view_income']) . '</td>';
-            echo '<td>' . wc_price($data['commission_income']) . '</td>';
-            echo '<td>' . wc_price($data['overall']) . '</td>';
-            echo '<td>';
-            echo '<select name="payment_status[' . intval($aid) . ']">';
-            echo '<option value="chua"' . ($data['status'] === 'chua' ? ' selected' : '') . '>Chưa thanh toán</option>';
-            echo '<option value="da"' . ($data['status'] === 'da' ? ' selected' : '') . '>Đã thanh toán</option>';
-            echo '</select>';
-            echo '</td>';
-            echo '</tr>';
-        }
-        echo '</tbody></table><br>';
+		// Form chọn tháng
+		echo '<form method="get">';
+		echo '<input type="hidden" name="page" value="partner_dashboard">';
+		echo '<select name="month">';
+		$current_year = date('Y');
+		for ($m = 1; $m <= 12; $m++) {
+			$month_val = sprintf('%02d', $m);
+			$option_value = $current_year . '-' . $month_val;
+			$option_label = $month_val . '-' . $current_year;
+			$sel = ($option_value == $selected_month) ? 'selected' : '';
+			echo "<option value='" . esc_attr($option_value) . "' $sel>" . esc_html($option_label) . "</option>";
+		}
+		echo '</select> ';
+		echo '<input type="submit" class="button button-primary" value="Xem">';
+		echo '</form><br>';
 
-        // Bảng 2: Tác giả chưa đủ điều kiện (< threshold) (không có toggle)
-        echo '<h2>Danh sách tác giả chưa đủ điều kiện (< ' . wc_price($threshold) . ')</h2>';
-        echo '<table class="widefat fixed striped">';
-        echo '<thead><tr>';
-        echo '<th>Tác giả</th>';
-        echo '<th>Tồn (tháng trước)</th>';
-        echo '<th>Thu nhập lượt xem</th>';
-        echo '<th>Thu nhập hoa hồng</th>';
-        echo '<th>Tổng thực nhận</th>';
-        echo '</tr></thead><tbody>';
-        foreach ($noneligible as $aid => $data) {
-            echo '<tr>';
-            echo '<td>' . esc_html($data['name']) . '</td>';
-            echo '<td>' . wc_price($data['carry']) . '</td>';
-            echo '<td>' . wc_price($data['view_income']) . '</td>';
-            echo '<td>' . wc_price($data['commission_income']) . '</td>';
-            echo '<td>' . wc_price($data['overall']) . '</td>';
-            echo '</tr>';
-        }
-        echo '</tbody></table>';
-        echo '<p><input type="submit" name="update_payment_status" class="button button-primary" value="Cập nhật trạng thái thanh toán"></p>';
-        echo '</form>';
-        echo '</div>';
-    }
+		// Bảng 1: Tác giả đủ điều kiện thanh toán (≥ threshold)
+		echo '<form method="post">';
+		echo '<input type="hidden" name="page" value="partner_dashboard">';
+		echo '<input type="hidden" name="month" value="' . esc_attr($selected_month) . '">';
+		echo '<h2>Danh sách tác giả đủ điều kiện thanh toán (≥ ' . wc_price($threshold) . ')</h2>';
+		echo '<table class="widefat fixed striped">';
+		echo '<thead><tr>';
+		echo '<th>Tác giả</th>';
+		echo '<th>Tồn (tháng trước)</th>';
+		echo '<th>Thu nhập lượt xem</th>';
+		echo '<th>Thu nhập hoa hồng</th>';
+		echo '<th>Tổng thực nhận</th>';
+		echo '<th>Trạng thái</th>';
+		echo '</tr></thead><tbody>';
+
+		foreach ($eligible as $aid => $data) {
+			echo '<tr>';
+			echo '<td>' . esc_html($data['name']) . '</td>';
+			echo '<td>' . wc_price($data['carry']) . '</td>';
+			echo '<td>' . wc_price($data['view_income']) . '</td>';
+			echo '<td>' . wc_price($data['commission_income']) . '</td>';
+			echo '<td>' . wc_price($data['overall']) . '</td>';
+			echo '<td>';
+			echo '<select name="payment_status[' . intval($aid) . ']">';
+			echo '<option value="chua"' . ($data['status'] === 'chua' ? ' selected' : '') . '>Chưa thanh toán</option>';
+			echo '<option value="da"' . ($data['status'] === 'da' ? ' selected' : '') . '>Đã thanh toán</option>';
+			echo '</select>';
+			echo '</td>';
+			echo '</tr>';
+		}
+		echo '</tbody></table><br>';
+
+		// Bảng 2: Tác giả chưa đủ điều kiện (< threshold)
+		echo '<h2>Danh sách tác giả chưa đủ điều kiện (< ' . wc_price($threshold) . ')</h2>';
+		echo '<table class="widefat fixed striped">';
+		echo '<thead><tr>';
+		echo '<th>Tác giả</th>';
+		echo '<th>Tồn (tháng trước)</th>';
+		echo '<th>Thu nhập lượt xem</th>';
+		echo '<th>Thu nhập hoa hồng</th>';
+		echo '<th>Tổng thực nhận</th>';
+		echo '</tr></thead><tbody>';
+
+		foreach ($noneligible as $aid => $data) {
+			echo '<tr>';
+			echo '<td>' . esc_html($data['name']) . '</td>';
+			echo '<td>' . wc_price($data['carry']) . '</td>';
+			echo '<td>' . wc_price($data['view_income']) . '</td>';
+			echo '<td>' . wc_price($data['commission_income']) . '</td>';
+			echo '<td>' . wc_price($data['overall']) . '</td>';
+			echo '</tr>';
+		}
+		echo '</tbody></table>';
+
+		echo '<p><input type="submit" name="update_payment_status" class="button button-primary" value="Cập nhật trạng thái thanh toán"></p>';
+		echo '</form>';
+		echo '</div>';
+	}
 
         public function render_author_yearly_income_summary() {
             $author_id       = get_current_user_id();
