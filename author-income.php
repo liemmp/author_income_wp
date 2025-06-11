@@ -1,9 +1,9 @@
 <?php
 /**
  * Plugin Name: Author Income
- * Description: Thống kê lượt xem bài viết và hoa hồng theo tác giả, tính thu nhập và gửi email báo cáo hàng tháng.
- * Version: 2.38
- * Author: ChatGPT, Deepseek và Rhino.
+ * Description: Hiển thị lượt xem bài viết và doanh thu phát sinh trên đơn hàng WooCommerce dựa theo tác giả. Tính thu nhập và gửi email báo cáo hàng tháng.
+ * Version: 2.39
+ * Author: ChatGPT, Deepseek và Liam.
  */
 
 if (!defined('ABSPATH')) {
